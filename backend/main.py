@@ -6,6 +6,7 @@ import os
 from typing import Optional
 import PyPDF2
 import io
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 # Helper function to get API key
 def get_api_key(model: str) -> str:
     key = os.getenv(f"{model.upper()}_API_KEY")
@@ -31,14 +35,28 @@ def get_api_key(model: str) -> str:
 @app.post("/generate")
 async def generate_response(model: str = Form(...), prompt: str = Form(...)):
     try:
-        api_key = get_api_key(model)
-        
-        # TODO: Implement actual model calls based on the selected model
-        # This is a placeholder response
-        return {
-            "response": f"Response from {model} for prompt: {prompt}",
-            "model": model
-        }
+        if model == "openai":
+            # Call OpenAI API
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            return {
+                "response": response.choices[0].message.content,
+                "model": model
+            }
+        else:
+            # For other models (placeholder)
+            api_key = get_api_key(model)
+            return {
+                "response": f"Response from {model} for prompt: {prompt}",
+                "model": model
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
