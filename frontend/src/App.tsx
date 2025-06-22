@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import { FaPaperPlane, FaPlus, FaRegComments, FaRegUserCircle, FaRobot, FaSpinner, FaUpload } from 'react-icons/fa';
 
@@ -45,6 +45,8 @@ const App: React.FC = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get current conversation
   const currentConv = conversations.find((c) => c.id === currentConvId);
@@ -83,23 +85,41 @@ const App: React.FC = () => {
 
   // Send a message
   const handleSend = async () => {
-    if (!input.trim() || !currentConv) return;
+    if (!input.trim()) return;
+    let convId = currentConvId;
+    let conv = currentConv;
+    // If no conversation, create one
+    if (!conv) {
+      const newConv: Conversation = {
+        id: Date.now().toString(),
+        provider,
+        model,
+        messages: [],
+        createdAt: new Date().toISOString(),
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      setCurrentConvId(newConv.id);
+      convId = newConv.id;
+      conv = newConv;
+    }
     setLoading(true);
     setError(null);
     const userMsg: Message = { role: 'user', content: input };
-    const updatedConv: Conversation = {
-      ...currentConv,
-      messages: [...currentConv.messages, userMsg],
-    };
     setConversations((prev) =>
-      prev.map((c) => (c.id === currentConv.id ? updatedConv : c))
+      prev.map((c) =>
+        c.id === convId ? { ...c, messages: [...c.messages, userMsg] } : c
+      )
     );
     setInput('');
     try {
+      // Only OpenAI is supported for real responses
+      if (provider !== 'openai') {
+        throw new Error('This provider is not yet supported.');
+      }
       const response = await axios.post('/api/generate', {
         provider,
         model,
-        prompt: input,
+        prompt: userMsg.content,
       });
       const assistantMsg: Message = {
         role: 'assistant',
@@ -107,13 +127,13 @@ const App: React.FC = () => {
       };
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === currentConv.id
+          c.id === convId
             ? { ...c, messages: [...c.messages, assistantMsg] }
             : c
         )
       );
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to get response.');
+      setError(err.response?.data?.message || err.message || 'Failed to get response.');
     } finally {
       setLoading(false);
     }
@@ -124,6 +144,53 @@ const App: React.FC = () => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  // Handle file upload
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const response = await axios.post('/api/upload', formData);
+      const userMsg: Message = { role: 'user', content: `Uploaded file: ${file.name}` };
+      let convId = currentConvId;
+      let conv = currentConv;
+      if (!conv) {
+        const newConv: Conversation = {
+          id: Date.now().toString(),
+          provider,
+          model,
+          messages: [],
+          createdAt: new Date().toISOString(),
+        };
+        setConversations((prev) => [newConv, ...prev]);
+        setCurrentConvId(newConv.id);
+        convId = newConv.id;
+        conv = newConv;
+      }
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId ? { ...c, messages: [...c.messages, userMsg] } : c
+        )
+      );
+      // Optionally, you can display the extracted text as an assistant message
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId
+            ? { ...c, messages: [...c.messages, { role: 'assistant', content: response.data.text }] }
+            : c
+        )
+      );
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to upload file.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -200,6 +267,9 @@ const App: React.FC = () => {
               <FaRobot className="text-6xl mb-4" />
               <div className="text-2xl font-semibold mb-2">Start a new conversation</div>
               <div className="mb-8">Choose a provider and send a message to begin</div>
+              {error && (
+                <div className="text-red-500 text-center mt-2">{error}</div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-4">
@@ -244,7 +314,7 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Input Area */}
+        {/* Input Area (always visible) */}
         <div className="p-4 border-t bg-white flex items-center gap-2">
           <input
             className="flex-1 p-3 border rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -252,12 +322,22 @@ const App: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={!currentConv || loading}
+            disabled={loading}
           />
+          <label className="p-3 bg-gray-200 hover:bg-gray-300 rounded cursor-pointer flex items-center">
+            <FaUpload />
+            <input
+              type="file"
+              className="hidden"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              disabled={uploading}
+            />
+          </label>
           <button
             className="p-3 bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
             onClick={handleSend}
-            disabled={!currentConv || loading || !input.trim()}
+            disabled={loading || !input.trim()}
           >
             {loading ? <FaSpinner className="animate-spin" /> : <FaPaperPlane />}
           </button>
