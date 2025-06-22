@@ -1,229 +1,266 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
-import { FaPaperPlane, FaSpinner, FaRobot, FaUser, FaKey, FaUpload } from 'react-icons/fa';
-import './App.css';
+import { FaPaperPlane, FaPlus, FaRegComments, FaRegUserCircle, FaRobot, FaSpinner, FaUpload } from 'react-icons/fa';
+
+const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'gpt-4', label: 'GPT-4' },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+  ],
+  claude: [
+    { value: 'claude-3-opus', label: 'Claude 3 Opus' },
+    { value: 'claude-3-sonnet', label: 'Claude 3 Sonnet' },
+    { value: 'claude-3-haiku', label: 'Claude 3 Haiku' },
+  ],
+  gemini: [
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+    { value: 'gemini-1.0-pro', label: 'Gemini 1.0 Pro' },
+  ],
+  perplexity: [
+    { value: 'pplx-70b', label: 'PPLX-70B' },
+    { value: 'pplx-8x7b', label: 'PPLX-8x7B' },
+  ],
+};
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
 }
 
-/**
- * Main App component that handles the chat interface and API interactions
- */
+interface Conversation {
+  id: string;
+  provider: string;
+  model: string;
+  messages: Message[];
+  createdAt: string;
+}
+
 const App: React.FC = () => {
-  // State management for the application
-  const [model, setModel] = useState('openai');
-  const [apiKey, setApiKey] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [provider, setProvider] = useState('openai');
+  const [model, setModel] = useState(PROVIDER_MODELS['openai'][0].value);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Load saved API key from localStorage for non-OpenAI models
-    const savedKey = localStorage.getItem('apiKey');
-    if (savedKey && model !== 'openai') {
-      setApiKey(savedKey);
-    }
-  }, [model]);
+  // Get current conversation
+  const currentConv = conversations.find((c) => c.id === currentConvId);
 
-  /**
-   * Handle sending a prompt to the selected AI model
-   */
+  // Handle provider change
+  const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newProvider = e.target.value;
+    setProvider(newProvider);
+    setModel(PROVIDER_MODELS[newProvider][0].value);
+  };
+
+  // Handle model change
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setModel(e.target.value);
+  };
+
+  // Start a new conversation
+  const handleNewChat = () => {
+    const newConv: Conversation = {
+      id: Date.now().toString(),
+      provider,
+      model,
+      messages: [],
+      createdAt: new Date().toISOString(),
+    };
+    setConversations([newConv, ...conversations]);
+    setCurrentConvId(newConv.id);
+    setError(null);
+  };
+
+  // Select a conversation
+  const handleSelectConv = (id: string) => {
+    setCurrentConvId(id);
+    setError(null);
+  };
+
+  // Send a message
   const handleSend = async () => {
-    if (!prompt.trim()) return;
-    
-    // Only check for API key if not using OpenAI
-    if (model !== 'openai' && !apiKey) {
-      setError('Please enter your API key first');
-      return;
-    }
-
+    if (!input.trim() || !currentConv) return;
     setLoading(true);
     setError(null);
-    
-    // Add user message
-    const userMessage: Message = { role: 'user', content: prompt };
-    setMessages(prev => [...prev, userMessage]);
-    setPrompt('');
-
+    const userMsg: Message = { role: 'user', content: input };
+    const updatedConv: Conversation = {
+      ...currentConv,
+      messages: [...currentConv.messages, userMsg],
+    };
+    setConversations((prev) =>
+      prev.map((c) => (c.id === currentConv.id ? updatedConv : c))
+    );
+    setInput('');
     try {
       const response = await axios.post('/api/generate', {
+        provider,
         model,
-        prompt,
-        // Only send API key for non-OpenAI models
-        ...(model !== 'openai' && { apiKey })
+        prompt: input,
       });
-
-      // Add assistant message
-      const assistantMessage: Message = {
+      const assistantMsg: Message = {
         role: 'assistant',
-        content: response.data.response
+        content: response.data.response,
       };
-      setMessages(prev => [...prev, assistantMessage]);
-    } catch (error: any) {
-      setError(error.response?.data?.message || 'Failed to get response. Please try again.');
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentConv.id
+            ? { ...c, messages: [...c.messages, assistantMsg] }
+            : c
+        )
+      );
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to get response.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  // Handle Enter key
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  /**
-   * Handle saving API keys
-   */
-  const handleSaveKey = () => {
-    if (!apiKey) {
-      setError('Please enter an API key');
-      return;
-    }
-    localStorage.setItem('apiKey', apiKey);
-    setError(null);
-  };
-
-  /**
-   * Handle file upload and text extraction
-   */
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const response = await axios.post('/api/upload', formData);
-      setMessages([...messages, { role: 'user', content: `Uploaded file: ${response.data.text}` }]);
-    } catch (error) {
-      console.error('Error uploading file:', error);
-    }
-  };
-
+  // UI
   return (
-    <div className="flex h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white">
+    <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <div className="w-80 bg-gray-800 border-r border-gray-700 p-6">
-        <h1 className="text-2xl font-bold mb-6 text-blue-400">AI Chat Hub</h1>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Select Model</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="openai">OpenAI GPT</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="claude">Anthropic Claude</option>
-              <option value="perplexity">Perplexity</option>
-            </select>
-          </div>
-
-          {/* Only show API key input for non-OpenAI models */}
-          {model !== 'openai' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">API Key</label>
-              <div className="flex space-x-2">
-                <input
-                  type="password"
-                  placeholder="Enter your API key"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="flex-1 p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <button
-                  onClick={handleSaveKey}
-                  className="p-2 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
-                  title="Save API Key"
-                >
-                  <FaKey />
-                </button>
-              </div>
-            </div>
+      <aside className="w-72 bg-white border-r flex flex-col">
+        <button
+          className="m-4 flex items-center gap-2 p-2 bg-blue-500 hover:bg-blue-600 text-white rounded shadow"
+          onClick={handleNewChat}
+        >
+          <FaPlus /> New Chat
+        </button>
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-4 text-xs text-gray-400 mb-2 mt-4">Recent Conversations</div>
+          {conversations.length === 0 && (
+            <div className="px-4 text-gray-400">No conversations yet.</div>
           )}
-
-          <div className="pt-4">
-            <label className="block text-sm font-medium text-gray-300 mb-2">Upload File</label>
-            <div className="flex items-center justify-center w-full">
-              <label className="w-full flex flex-col items-center px-4 py-6 bg-gray-700 rounded-lg cursor-pointer hover:bg-gray-600 transition-colors">
-                <FaUpload className="text-2xl mb-2" />
-                <span className="text-sm">Click to upload</span>
-                <input type="file" className="hidden" />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main chat area */}
-      <div className="flex-1 flex flex-col">
-        {/* Messages */}
-        <div className="flex-1 p-6 overflow-y-auto space-y-4">
-          {messages.map((msg, index) => (
+          {conversations.map((conv) => (
             <div
-              key={index}
-              className={`flex items-start space-x-4 ${
-                msg.role === 'user' ? 'justify-end' : 'justify-start'
+              key={conv.id}
+              className={`flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-blue-50 ${
+                conv.id === currentConvId ? 'bg-blue-100 font-semibold' : ''
               }`}
+              onClick={() => handleSelectConv(conv.id)}
             >
-              {msg.role === 'assistant' && (
-                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
-                  <FaRobot />
-                </div>
-              )}
-              <div
-                className={`max-w-[70%] p-4 rounded-lg ${
-                  msg.role === 'user'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-700 text-gray-100'
-                }`}
-              >
-                {msg.content}
-              </div>
-              {msg.role === 'user' && (
-                <div className="w-8 h-8 rounded-full bg-gray-500 flex items-center justify-center">
-                  <FaUser />
-                </div>
-              )}
+              <FaRegComments className="text-blue-400" />
+              <span className="truncate">
+                {conv.messages[0]?.content.slice(0, 30) || 'New Conversation'}
+              </span>
             </div>
           ))}
-          {loading && (
-            <div className="flex justify-center">
-              <FaSpinner className="animate-spin text-2xl text-blue-500" />
+        </div>
+      </aside>
+
+      {/* Main Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Top Bar */}
+        <div className="flex items-center gap-4 p-4 border-b bg-white">
+          <select
+            className="p-2 border rounded bg-gray-50"
+            value={provider}
+            onChange={handleProviderChange}
+          >
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="perplexity">Perplexity</option>
+          </select>
+          <select
+            className="p-2 border rounded bg-gray-50"
+            value={model}
+            onChange={handleModelChange}
+          >
+            {PROVIDER_MODELS[provider].map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="ml-auto px-4 py-2 border rounded hover:bg-gray-100"
+            onClick={handleNewChat}
+          >
+            New Conversation
+          </button>
+        </div>
+
+        {/* Chat Area */}
+        <div className="flex-1 flex flex-col overflow-y-auto px-0 md:px-24 py-8 bg-gray-50">
+          {!currentConv || currentConv.messages.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center text-gray-400">
+              <FaRobot className="text-6xl mb-4" />
+              <div className="text-2xl font-semibold mb-2">Start a new conversation</div>
+              <div className="mb-8">Choose a provider and send a message to begin</div>
             </div>
-          )}
-          {error && (
-            <div className="bg-red-500 text-white p-4 rounded-lg text-center">
-              {error}
+          ) : (
+            <div className="flex flex-col gap-4">
+              {currentConv.messages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`flex items-end gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+                  >
+                    <div
+                      className={`rounded-full w-8 h-8 flex items-center justify-center ${
+                        msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-700'
+                      }`}
+                    >
+                      {msg.role === 'user' ? <FaRegUserCircle /> : <FaRobot />}
+                    </div>
+                    <div
+                      className={`max-w-lg px-4 py-2 rounded-lg shadow ${
+                        msg.role === 'user'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-100 text-gray-900'
+                      }`}
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="flex items-center gap-2 bg-gray-100 text-gray-900 px-4 py-2 rounded-lg shadow animate-pulse">
+                    <FaRobot /> <span>Assistant is typing...</span>
+                  </div>
+                </div>
+              )}
+              {error && (
+                <div className="text-red-500 text-center mt-2">{error}</div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Input area */}
-        <div className="p-6 border-t border-gray-700">
-          <div className="flex space-x-4">
-            <input
-              type="text"
-              placeholder="Type your message..."
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyPress={handleKeyPress}
-              className="flex-1 p-4 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={handleSend}
-              disabled={loading}
-              className="p-4 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:opacity-50"
-            >
-              <FaPaperPlane />
-            </button>
-          </div>
+        {/* Input Area */}
+        <div className="p-4 border-t bg-white flex items-center gap-2">
+          <input
+            className="flex-1 p-3 border rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            placeholder="Type your message here..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={!currentConv || loading}
+          />
+          <button
+            className="p-3 bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
+            onClick={handleSend}
+            disabled={!currentConv || loading || !input.trim()}
+          >
+            {loading ? <FaSpinner className="animate-spin" /> : <FaPaperPlane />}
+          </button>
         </div>
       </div>
     </div>
