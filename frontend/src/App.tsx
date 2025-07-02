@@ -116,10 +116,11 @@ const App: React.FC = () => {
       if (provider !== 'openai') {
         throw new Error('This provider is not yet supported.');
       }
-      const response = await axios.post('/api/generate', {
-        provider,
-        model,
-        prompt: userMsg.content,
+      const formData = new FormData();
+      formData.append('model', model);
+      formData.append('prompt', userMsg.content);
+      const response = await axios.post('/api/generate', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
       const assistantMsg: Message = {
         role: 'assistant',
